@@ -1,78 +1,87 @@
 import csv
 import sqlite3
 from datetime import datetime
+from sentiment_logic import calculate_score, get_sentiment
 
-# Simple sentiment function
-def calculate_score(text):
-    positive_words = ["good", "great", "excellent", "amazing", "love"]
-    negative_words = ["bad", "worst", "poor", "hate"]
+def create_database():
+    try:
+        conn = sqlite3.connect("reviews.db")
+        cursor = conn.cursor()
 
-    score = 0
-    text = text.lower()
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS amazon_sentiment (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            review TEXT,
+            score INTEGER,
+            sentiment TEXT,
+            timestamp TEXT
+        )
+        """)
 
-    for word in positive_words:
-        if word in text:
-            score += 1
+        conn.commit()
+        conn.close()
+    except sqlite3.Error as e:
+        print("Database Error:", e)
 
-    for word in negative_words:
-        if word in text:
-            score -= 1
+def process_reviews():
+    try:
+        conn = sqlite3.connect("reviews.db")
+        cursor = conn.cursor()
 
-    return score
+        with open("amazon.csv", encoding="utf-8") as file:
+            reader = csv.DictReader(file)
 
-def get_sentiment(score):
-    if score > 0:
-        return "Positive"
-    elif score < 0:
-        return "Negative"
-    else:
-        return "Neutral"
+            for row in reader:
+                review_text = row["review_content"]
 
-# Connect to ONE database only
-conn = sqlite3.connect("amazon_reviews.db")
-cursor = conn.cursor()
+                score = calculate_score(review_text)
+                sentiment = get_sentiment(score)
+                time_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-# Create table
-cursor.execute("""
-CREATE TABLE IF NOT EXISTS amazon_sentiment (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    review_text TEXT,
-    score INTEGER,
-    sentiment TEXT,
-    timestamp TEXT
-)
-""")
+                cursor.execute("""
+                INSERT INTO amazon_sentiment (review, score, sentiment, timestamp)
+                VALUES (?, ?, ?, ?)
+                """, (review_text, score, sentiment, time_now))
 
-# Open CSV
-try:
-    with open("amazon.csv", "r", encoding="utf-8") as file:
-        reader = csv.DictReader(file)
+        conn.commit()
+        conn.close()
 
-        for row in reader:
-            review_text = row["review_content"]
+        print("✅ All reviews processed successfully!")
 
-            score = calculate_score(review_text)
-            sentiment = get_sentiment(score)
-            print("Score:", score, "| Sentiment:", sentiment)
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    except FileNotFoundError:
+        print("❌ CSV file not found!")
+    except sqlite3.Error as e:
+        print("❌ Database Error:", e)
 
-            cursor.execute("""
-            INSERT INTO amazon_sentiment (review_text, score, sentiment, timestamp)
-            VALUES (?, ?, ?, ?)
-            """, (review_text, score, sentiment, timestamp))
+def show_summary():
+    try:
+        conn = sqlite3.connect("reviews.db")
+        cursor = conn.cursor()
 
-    conn.commit()
-    print("✅ All reviews processed and stored successfully!")
+        cursor.execute("SELECT COUNT(*) FROM amazon_sentiment")
+        total = cursor.fetchone()[0]
 
-except FileNotFoundError:
-    print("❌ CSV file not found. Check file name and location.")
+        cursor.execute("SELECT COUNT(*) FROM amazon_sentiment WHERE sentiment='Positive'")
+        positive = cursor.fetchone()[0]
 
-# Show first 5 rows
-cursor.execute("SELECT * FROM amazon_sentiment LIMIT 5")
-rows = cursor.fetchall()
+        cursor.execute("SELECT COUNT(*) FROM amazon_sentiment WHERE sentiment='Negative'")
+        negative = cursor.fetchone()[0]
 
-print("\nFirst 5 rows:\n")
-for row in rows:
-    print(row)
+        cursor.execute("SELECT COUNT(*) FROM amazon_sentiment WHERE sentiment='Neutral'")
+        neutral = cursor.fetchone()[0]
 
-conn.close()
+        print("\n📊 Summary Statistics")
+        print("Total Reviews:", total)
+        print("Positive:", positive)
+        print("Negative:", negative)
+        print("Neutral:", neutral)
+
+        conn.close()
+
+    except sqlite3.Error as e:
+        print("❌ Database Error:", e)
+
+if __name__ == "__main__":
+    create_database()
+    process_reviews()
+    show_summary()
